@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
@@ -15,7 +16,6 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 	log "github.com/sirupsen/logrus"
-	"github.com/tidwall/gjson"
 )
 
 func (h *Host) RegisterUsagePlugins() {
@@ -818,7 +818,7 @@ func (h *Host) callResponseNormalizer(ctx context.Context, record capabilityReco
 	}
 	if record.plugin.Capabilities.ResponseNormalizerOmitRequestBody {
 		req.RequestedModel = model
-		if requested := gjson.GetBytes(originalRequestRawJSON, "model"); requested.Type == gjson.String && requested.Str != "" {
+		if requested := ojson.GetBytes(originalRequestRawJSON, "model"); requested.Type == ojson.String && requested.Str != "" {
 			req.RequestedModel = requested.Str
 		}
 	} else {

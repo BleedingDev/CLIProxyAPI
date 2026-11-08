@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
-	"github.com/tidwall/gjson"
 )
 
 // end_turn is protocol metadata, not answer text. Conversely, a model's
@@ -55,7 +55,7 @@ func TestClaudeFableEndTurnDoesNotCreateOrStripText(t *testing.T) {
 					if !strings.HasPrefix(line, "data:") {
 						continue
 					}
-					event := gjson.Parse(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+					event := ojson.Parse(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
 					if event.Get("delta.type").String() == "text_delta" {
 						text.WriteString(event.Get("delta.text").String())
 					}
