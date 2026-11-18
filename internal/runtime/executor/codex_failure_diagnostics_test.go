@@ -40,6 +40,16 @@ func TestCodexFailureDiagnosticPreservesEnvelope(t *testing.T) {
 	if strings.Contains(err.Error(), "excluded") {
 		t.Fatal("diagnostic copied credential headers")
 	}
+	rawBody := []byte(" {\n\"error\": {\"code\":\"custom\", \"diagnostics\":{\"origin\":\"provider-origin\",\"upstream_body\":\"provider-value\"},\"message\":\"provider message\"},\"arbitrary\":[null,9007199254740993]} \n")
+	httpErr := newCodexStatusErrWithHeaders(http.StatusBadGateway, nil, rawBody)
+	backup := ojson.Get(httpErr.Error(), "error.diagnostics.upstream_body").String()
+	if backup != string(rawBody) || ojson.Get(backup, "error.diagnostics.origin").String() != "provider-origin" || ojson.Get(backup, "error.diagnostics.upstream_body").String() != "provider-value" {
+		t.Fatalf("provider field collision lost the exact original body: %q", backup)
+	}
+	again := codexFailureDiagnostic(httpErr, codexFailureDetails{LastEvent: "error"})
+	if ojson.Get(again.Error(), "error.diagnostics.upstream_body").String() != string(rawBody) {
+		t.Fatal("enrichment replaced the original body with a proxy envelope")
+	}
 	incomplete := newCodexEmptyIncompleteStreamError(codexFailureDetails{Event: []byte(`{"type":"response.incomplete","response":{"incomplete_details":{"reason":"provider_specific_reason"}}}`)})
 	if got := ojson.Get(incomplete.Error(), "error.diagnostics.incomplete_reason").String(); got != "provider_specific_reason" {
 		t.Fatalf("incomplete reason = %q", got)

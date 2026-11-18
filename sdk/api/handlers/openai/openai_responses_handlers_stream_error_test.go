@@ -42,7 +42,7 @@ func TestForwardResponsesStreamCodexRetainsFullFailure(t *testing.T) {
 	}
 	err := ojson.GetBytesNoCopy(payload, "response.error")
 	message := err.Get("message").String()
-	if err.Get("code").String() != "proxy_upstream_failure" || !strings.Contains(message, long) || !strings.Contains(message, "insufficient_quota") || !strings.Contains(message, "req_full") || !strings.Contains(message, "9007199254740993") {
+	if err.Get("code").String() != "insufficient_quota" || !strings.Contains(message, long) || !strings.Contains(message, "insufficient_quota") || !strings.Contains(message, "req_full") || !strings.Contains(message, "9007199254740993") {
 		t.Fatalf("Codex-visible message lost failure fields: %q", message)
 	}
 	if strings.Contains(recorder.Body.String(), "must_redact") {

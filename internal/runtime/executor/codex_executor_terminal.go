@@ -166,7 +166,8 @@ func codexTerminalStreamErrWithCooling(eventData []byte, modelLevelCooling bool)
 		return statusErr{}, nil, false
 	}
 	headers := parseCodexWebsocketErrorHeaders(eventData)
-	return newCodexStatusErrWithHeadersAndCooling(http.StatusBadRequest, headers, body, modelLevelCooling), body, true
+	err := newCodexStatusErrWithHeadersAndCooling(http.StatusBadRequest, headers, body, modelLevelCooling)
+	return codexFailureDiagnostic(err, codexFailureDetails{Body: eventData}), body, true
 }
 
 func codexTerminalFailureErr(eventData []byte) (statusErr, []byte, bool) {
@@ -182,7 +183,8 @@ func codexTerminalFailureErrWithCooling(eventData []byte, modelLevelCooling bool
 		return statusErr{}, nil, false
 	}
 	headers := parseCodexWebsocketErrorHeaders(eventData)
-	return newCodexStatusErrWithHeadersAndCooling(codexTerminalFailureStatus(body), headers, body, modelLevelCooling), body, true
+	err := newCodexStatusErrWithHeadersAndCooling(codexTerminalFailureStatus(body), headers, body, modelLevelCooling)
+	return codexFailureDiagnostic(err, codexFailureDetails{Body: eventData}), body, true
 }
 
 func codexTerminalFailureStatus(body []byte) int {
@@ -374,6 +376,7 @@ func newCodexStatusErrWithCooling(statusCode int, body []byte, modelLevelCooling
 }
 
 func newCodexStatusErrWithHeadersAndCooling(statusCode int, headers http.Header, body []byte, modelLevelCooling bool) statusErr {
+	upstreamBody := bytes.Clone(body)
 	errCode := statusCode
 	isUsageLimit := isCodexUsageLimitError(body)
 	credentialScoped := isUsageLimit && !modelLevelCooling
@@ -394,7 +397,7 @@ func newCodexStatusErrWithHeadersAndCooling(statusCode int, headers http.Header,
 			err.retryAfter = retryAfter
 		}
 	}
-	return codexFailureDiagnostic(err, codexFailureDetails{HTTPStatus: statusCode, Headers: headers})
+	return codexFailureDiagnostic(err, codexFailureDetails{HTTPStatus: statusCode, Headers: headers, Body: upstreamBody})
 }
 
 func classifyCodexStatusError(statusCode int, body []byte) []byte {

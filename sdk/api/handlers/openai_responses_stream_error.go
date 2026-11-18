@@ -91,12 +91,12 @@ func BuildOpenAIResponsesStreamFailedChunk(status int, errText string, sequenceN
 }
 
 // BuildCodexResponsesStreamFailedChunk carries the complete failure in the one
-// field Codex retains. Provider codes remain in provider_error: Codex substitutes
-// canned text for several standard codes and otherwise discards extra fields.
+// message field Codex retains for generic failures. Structured provider details
+// also remain available without changing the code or type used for recovery.
 func BuildCodexResponsesStreamFailedChunk(status int, errText string, sequenceNumber int) []byte {
 	doc := ojson.NewDoc(BuildOpenAIResponsesStreamFailedChunk(status, errText, sequenceNumber))
 	providerError := doc.Get("response.error")
-	if providerError.Get("code").String() == "proxy_upstream_failure" && providerError.Get("provider_error").Exists() {
+	if providerError.Get("proxy_diagnostics").String() == "v1" {
 		return doc.Bytes()
 	}
 	diagnostic := ojson.NewDocString(`{}`)
@@ -112,8 +112,16 @@ func BuildCodexResponsesStreamFailedChunk(status int, errText string, sequenceNu
 		message = http.StatusText(status)
 	}
 	_ = doc.SetRaw("response.error.provider_error", providerError.Raw)
-	_ = doc.Set("response.error.code", "proxy_upstream_failure")
-	_ = doc.Set("response.error.type", "server_error")
+	if providerError.Get("diagnostics.origin").String() == "cliproxy.codex" {
+		if original := providerError.Get("provider_error"); original.IsObject() {
+			for _, field := range []string{"code", "type"} {
+				if value := original.Get(field); value.Exists() {
+					_ = doc.SetRaw("response.error."+field, value.Raw)
+				}
+			}
+		}
+	}
+	_ = doc.Set("response.error.proxy_diagnostics", "v1")
 	_ = doc.Set("response.error.message", message+"\nUpstream failure details: "+string(diagnostic.Bytes()))
 	return doc.Bytes()
 }

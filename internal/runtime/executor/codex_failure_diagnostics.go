@@ -12,6 +12,7 @@ type codexFailureDetails struct {
 	Headers    http.Header
 	LastEvent  string
 	Event      []byte
+	Body       []byte
 	Cause      error
 }
 
@@ -24,6 +25,16 @@ func codexFailureDiagnostic(err statusErr, details codexFailureDetails) statusEr
 		body = doc.Bytes()
 	}
 	doc := ojson.NewDoc(body)
+	upstreamBody := details.Body
+	if len(details.Event) > 0 {
+		upstreamBody = details.Event
+	}
+	if len(upstreamBody) == 0 && !doc.Get("error.diagnostics.upstream_body").Exists() {
+		upstreamBody = []byte(err.msg)
+	}
+	if len(upstreamBody) > 0 {
+		_ = doc.Set("error.diagnostics.upstream_body", string(upstreamBody))
+	}
 	_ = doc.Set("error.diagnostics.origin", "cliproxy.codex")
 	if details.HTTPStatus > 0 {
 		_ = doc.Set("error.diagnostics.upstream_http_status", details.HTTPStatus)

@@ -133,7 +133,7 @@ func TestForwardResponsesStreamPreservesResponseFailedEventAndEnvelopeForAllClie
 			}
 			codePath := "error.code"
 			if tc.name == "codex client" {
-				if resp.Get(codePath).String() != "proxy_upstream_failure" {
+				if resp.Get(codePath).String() != "context_length_exceeded" {
 					t.Fatalf("Codex error code = %q", resp.Get(codePath).String())
 				}
 				codePath = "error.provider_error.code"

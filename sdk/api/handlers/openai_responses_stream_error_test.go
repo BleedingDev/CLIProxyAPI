@@ -11,11 +11,11 @@ import (
 
 func TestBuildCodexResponsesStreamFailedChunkPreservesFullDiagnostic(t *testing.T) {
 	long := strings.Repeat("full provider body ", 700)
-	for _, code := range []string{"context_length_exceeded", "insufficient_quota", "usage_not_included", "server_is_overloaded", "slow_down", "custom_provider_code"} {
-		errText, _ := json.Marshal(map[string]any{"error": map[string]any{"code": code, "message": long, "custom": []any{nil, true, json.Number("9007199254740993")}}, "request_id": "req_body", "status": 503})
+	for _, code := range []string{"context_length_exceeded", "insufficient_quota", "usage_not_included", "server_is_overloaded", "slow_down", "custom_provider_code", "request_timeout", "internal_server_error", "rate_limit_exceeded"} {
+		errText, _ := json.Marshal(map[string]any{"error": map[string]any{"code": code, "type": "provider_type", "message": long, "custom": []any{nil, true, json.Number("9007199254740993")}}, "request_id": "req_body", "status": 503})
 		chunk := BuildCodexResponsesStreamFailedChunk(503, string(errText), 4)
 		err := ojson.GetBytesNoCopy(chunk, "response.error")
-		if err.Get("code").String() != "proxy_upstream_failure" || err.Get("provider_error.code").String() != code {
+		if err.Get("code").String() != code || err.Get("provider_error.code").String() != code || err.Get("type").String() != "provider_type" {
 			t.Fatalf("Codex wire/provider code lost: %s", chunk)
 		}
 		message := err.Get("message").String()
@@ -25,6 +25,10 @@ func TestBuildCodexResponsesStreamFailedChunkPreservesFullDiagnostic(t *testing.
 		if again := BuildCodexResponsesStreamFailedChunk(503, string(chunk), 4); string(again) != string(chunk) {
 			t.Fatal("repairing a proxy failure changed or expanded it")
 		}
+	}
+	classified := BuildCodexResponsesStreamFailedChunk(400, `{"error":{"code":"context_too_large","type":"invalid_request_error","message":"long context","provider_error":{"code":"context_length_exceeded","type":"provider_type","message":"long context"},"diagnostics":{"origin":"cliproxy.codex"}}}`, 0)
+	if ojson.GetBytesNoCopy(classified, "response.error.code").String() != "context_length_exceeded" || ojson.GetBytesNoCopy(classified, "response.error.type").String() != "provider_type" {
+		t.Fatalf("wire error did not restore provider classification: %s", classified)
 	}
 }
 
