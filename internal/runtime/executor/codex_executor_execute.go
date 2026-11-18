@@ -276,7 +276,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 		eventData = helps.RestoreCodexMultiAgentV2Response(eventData, optimizeMultiAgentV2)
 		reporter.ObserveResponseModel(eventData)
 		eventType := ojson.GetBytesNoCopy(eventData, "type").String()
-		lastEvent = eventType
+		lastEvent = strings.Clone(eventType)
 
 		if helps.HasMeaningfulCodexOutputDelta(eventData) {
 			sawOutputDelta = true

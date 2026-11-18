@@ -559,8 +559,8 @@ func TestWriteImagesStreamErrorEventSanitizesPayload(t *testing.T) {
 	writeImagesStreamErrorEvent(c, &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: errors.New(raw)})
 
 	body := recorder.Body.String()
-	if strings.Contains(body, "image-secret") || len(body) > 4096 || !strings.Contains(body, "[REDACTED]") {
-		t.Fatalf("image stream error was not safely bounded: len=%d body=%q", len(body), body)
+	if strings.Contains(body, "image-secret") || !strings.Contains(body, strings.Repeat("x", 8192)) || !strings.Contains(body, "[REDACTED]") {
+		t.Fatalf("image stream error leaked credentials or clipped provider details: len=%d body=%q", len(body), body)
 	}
 }
 

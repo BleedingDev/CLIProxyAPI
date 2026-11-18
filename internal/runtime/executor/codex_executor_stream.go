@@ -211,7 +211,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 			lastEvent = strings.TrimSpace(string(rawLine[len("event:"):]))
 		} else if bytes.HasPrefix(rawLine, dataTag) {
 			if kind := ojson.GetBytesNoCopy(bytes.TrimSpace(rawLine[len(dataTag):]), "type").String(); kind != "" {
-				lastEvent = kind
+				lastEvent = strings.Clone(kind)
 			}
 		}
 		helps.AppendAPIResponseChunk(ctx, e.cfg, rawLine)

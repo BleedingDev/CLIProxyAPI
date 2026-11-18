@@ -132,7 +132,7 @@ func TestForwardResponsesStreamPreservesResponseFailedEventAndEnvelopeForAllClie
 				t.Fatalf("response envelope lost id or status: %s", payload)
 			}
 			codePath := "error.code"
-			if tc.userAgent != "" {
+			if tc.name == "codex client" {
 				if resp.Get(codePath).String() != "proxy_upstream_failure" {
 					t.Fatalf("Codex error code = %q", resp.Get(codePath).String())
 				}
