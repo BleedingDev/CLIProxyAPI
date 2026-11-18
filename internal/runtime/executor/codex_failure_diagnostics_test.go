@@ -92,3 +92,53 @@ func TestCodexExecutorStreamFailureRetainsEOFMetadata(t *testing.T) {
 		})
 	}
 }
+
+func TestCodexFailureDiagnosticHTTPRejectionMetadata(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		for _, truncated := range []bool{false, true} {
+			t.Run(fmt.Sprintf("stream=%t/truncated=%t", stream, truncated), func(t *testing.T) {
+				body := ` {"error":{"code":"provider_failed","message":"upstream rejected","custom":[null,true,9007199254740993]},"vendor":"` + strings.Repeat("raw", 2000) + `"} `
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					w.Header().Set("X-Request-Id", "header_only_request_id")
+					w.Header().Set("Traceparent", "00-provider-trace")
+					w.Header().Set("Authorization", "Bearer excluded-header-secret")
+					w.Header().Set("Set-Cookie", "excluded-cookie-secret")
+					if truncated {
+						w.Header().Set("Content-Length", "99999")
+					}
+					w.WriteHeader(http.StatusServiceUnavailable)
+					_, _ = io.WriteString(w, body)
+				}))
+				defer server.Close()
+				executor := NewCodexExecutor(&config.Config{})
+				auth := &cliproxyauth.Auth{Attributes: map[string]string{"base_url": server.URL, "api_key": "test"}}
+				req := cliproxyexecutor.Request{Model: "gpt-5.5", Payload: []byte(`{"model":"gpt-5.5","input":"hello"}`)}
+				opts := cliproxyexecutor.Options{SourceFormat: sdktranslator.FromString("openai-response"), Stream: stream}
+				var err error
+				if stream {
+					_, err = executor.ExecuteStream(context.Background(), auth, req, opts)
+				} else {
+					_, err = executor.Execute(context.Background(), auth, req, opts)
+				}
+				if err == nil {
+					t.Fatal("HTTP rejection succeeded")
+				}
+				for path, want := range map[string]string{
+					"upstream_http_status": "503", "upstream_request_id": "header_only_request_id", "upstream_body": body,
+					"upstream_headers.x-request-id.0": "header_only_request_id", "upstream_headers.content-type.0": "application/json", "upstream_headers.traceparent.0": "00-provider-trace",
+				} {
+					if got := ojson.Get(err.Error(), "error.diagnostics."+path).String(); got != want {
+						t.Errorf("%s lost: got=%q want=%q", path, got, want)
+					}
+				}
+				if strings.Contains(err.Error(), "excluded-header-secret") || strings.Contains(err.Error(), "excluded-cookie-secret") {
+					t.Fatal("diagnostic retained credential response headers")
+				}
+				if truncated && ojson.Get(err.Error(), "error.diagnostics.cause").String() != "unexpected EOF" {
+					t.Fatalf("HTTP rejection lost body read failure: %v", err)
+				}
+			})
+		}
+	}
+}

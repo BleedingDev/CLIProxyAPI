@@ -39,6 +39,11 @@ func codexFailureDiagnostic(err statusErr, details codexFailureDetails) statusEr
 	if details.HTTPStatus > 0 {
 		_ = doc.Set("error.diagnostics.upstream_http_status", details.HTTPStatus)
 	}
+	for _, name := range []string{"X-Request-Id", "Request-Id", "Openai-Request-Id", "X-Amzn-Requestid", "Cf-Ray", "Traceparent", "X-Amzn-Trace-Id", "Retry-After", "Content-Type", "Date"} {
+		if values := details.Headers.Values(name); len(values) > 0 {
+			_ = doc.Set("error.diagnostics.upstream_headers."+strings.ToLower(name), values)
+		}
+	}
 	for _, name := range []string{"X-Request-Id", "Request-Id", "Openai-Request-Id", "X-Amzn-Requestid", "Cf-Ray"} {
 		if id := strings.TrimSpace(details.Headers.Get(name)); id != "" {
 			_ = doc.Set("error.diagnostics.upstream_request_id", id)
