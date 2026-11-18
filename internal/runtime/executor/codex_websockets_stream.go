@@ -516,7 +516,7 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 				sawOutputDelta = true
 			}
 			if helps.IsCodexTerminalEmptyIncomplete(payload, len(outputItemsByIndex)+len(outputItemsFallback), sawOutputDelta) {
-				streamErr := newCodexEmptyIncompleteStreamError()
+				streamErr := newCodexEmptyIncompleteStreamError(codexFailureDetails{HTTPStatus: http.StatusSwitchingProtocols, LastEvent: eventType, Event: payload})
 				helps.RecordAPIWebsocketError(ctx, e.cfg, "upstream_error", streamErr)
 				reporter.PublishFailure(ctx, streamErr)
 				if sess != nil {
@@ -780,7 +780,7 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 				sawOutputDelta = true
 			}
 			if helps.IsCodexTerminalEmptyIncomplete(payload, len(outputItemsByIndex)+len(outputItemsFallback), sawOutputDelta) {
-				streamErr := newCodexEmptyIncompleteStreamError()
+				streamErr := newCodexEmptyIncompleteStreamError(codexFailureDetails{HTTPStatus: http.StatusSwitchingProtocols, LastEvent: eventType, Event: payload})
 				helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
 				reporter.PublishFailure(ctx, streamErr)
 				if sess != nil {

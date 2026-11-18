@@ -382,7 +382,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 					e.invalidateUpstreamConn(sess, conn, "terminal_empty_incomplete", nil)
 					unlockSession()
 				}
-				streamErr := newCodexEmptyIncompleteStreamError()
+				streamErr := newCodexEmptyIncompleteStreamError(codexFailureDetails{HTTPStatus: http.StatusSwitchingProtocols, LastEvent: eventType, Event: payload})
 				helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
 				reporter.PublishFailure(ctx, streamErr)
 				return resp, streamErr

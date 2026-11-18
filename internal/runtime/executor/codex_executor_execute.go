@@ -265,6 +265,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 	outputItemsByIndex := make(map[int64][]byte)
 	var outputItemsFallback [][]byte
 	sawOutputDelta := false
+	lastEvent := "none"
 	for events.Scan() {
 		line := events.Bytes()
 		if !bytes.HasPrefix(line, dataTag) {
@@ -275,12 +276,14 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 		eventData = helps.RestoreCodexMultiAgentV2Response(eventData, optimizeMultiAgentV2)
 		reporter.ObserveResponseModel(eventData)
 		eventType := ojson.GetBytesNoCopy(eventData, "type").String()
+		lastEvent = eventType
 
 		if helps.HasMeaningfulCodexOutputDelta(eventData) {
 			sawOutputDelta = true
 		}
 
 		if streamErr, terminalBody, ok := codexTerminalFailureErrWithCooling(eventData, e.modelLevelCooling()); ok {
+			streamErr = codexFailureDiagnostic(streamErr, codexFailureDetails{HTTPStatus: httpResp.StatusCode, Headers: httpResp.Header, LastEvent: eventType, Event: eventData})
 			if errClearReplay := clearCodexReasoningReplayOnInvalidSignature(ctx, replayScope, streamErr.StatusCode(), terminalBody); errClearReplay != nil {
 				if detail, hasDetail := helps.ParseCodexUsageWithOutputItems(eventData, outputItemsByIndex, outputItemsFallback); hasDetail {
 					reporter.PublishFailureWithDetail(ctx, detail, errClearReplay)
@@ -313,7 +316,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 		}
 
 		if helps.IsCodexTerminalEmptyIncomplete(eventData, len(outputItemsByIndex)+len(outputItemsFallback), sawOutputDelta) {
-			err = newCodexEmptyIncompleteStreamError()
+			err = newCodexEmptyIncompleteStreamError(codexFailureDetails{HTTPStatus: httpResp.StatusCode, Headers: httpResp.Header, LastEvent: eventType, Event: eventData})
 			if detail, hasDetail := helps.ParseCodexUsageWithOutputItems(eventData, outputItemsByIndex, outputItemsFallback); hasDetail {
 				reporter.PublishFailureWithDetail(ctx, detail, err)
 			}
@@ -378,7 +381,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 		}
 		helps.RecordAPIResponseError(ctx, e.cfg, errRead)
 	}
-	err = newCodexIncompleteStreamError()
+	err = newCodexIncompleteStreamError(codexFailureDetails{HTTPStatus: httpResp.StatusCode, Headers: httpResp.Header, LastEvent: lastEvent, Cause: errRead})
 	return resp, err
 }
 

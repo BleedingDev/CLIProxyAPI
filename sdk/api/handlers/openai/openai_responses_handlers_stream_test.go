@@ -131,8 +131,15 @@ func TestForwardResponsesStreamPreservesResponseFailedEventAndEnvelopeForAllClie
 			if resp.Get("id").String() != "msg_1" || resp.Get("status").String() != "failed" {
 				t.Fatalf("response envelope lost id or status: %s", payload)
 			}
-			if resp.Get("error.code").String() != "context_length_exceeded" {
-				t.Fatalf("response.error.code = %q, want context_length_exceeded: %s", resp.Get("error.code").String(), payload)
+			codePath := "error.code"
+			if tc.userAgent != "" {
+				if resp.Get(codePath).String() != "proxy_upstream_failure" {
+					t.Fatalf("Codex error code = %q", resp.Get(codePath).String())
+				}
+				codePath = "error.provider_error.code"
+			}
+			if resp.Get(codePath).String() != "context_length_exceeded" {
+				t.Fatalf("provider error code = %q, want context_length_exceeded: %s", resp.Get(codePath).String(), payload)
 			}
 			if resp.Get("output.#").Int() != 1 || resp.Get("usage.total_tokens").Int() != 14 {
 				t.Fatalf("response output or usage lost: %s", payload)

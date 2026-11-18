@@ -10,14 +10,54 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 )
+
+func TestForwardResponsesStreamCodexRetainsFullFailure(t *testing.T) {
+	h, recorder, c, flusher := newResponsesStreamTestHandler(t)
+	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.170.0")
+	logging.SetGinRequestID(c, "local_request_full")
+	hook := logtest.NewGlobal()
+	t.Cleanup(hook.Reset)
+	long := strings.Repeat("provider raw diagnostic ", 600)
+	frame := []byte(fmt.Sprintf(`{"type":"response.failed","request_id":"req_full","vendor":{"long":%q,"nested":[null,true,9007199254740993],"api_key":"must_redact"},"response":{"id":"resp_full","status":"failed","error":{"code":"insufficient_quota","message":"exact upstream reason"}}}`, long))
+	data := make(chan []byte, 1)
+	data <- append(append([]byte("data: "), frame...), '\n', '\n')
+	close(data)
+	errs := make(chan *interfaces.ErrorMessage)
+	close(errs)
+	h.forwardResponsesStream(c, flusher, func(error) {}, data, errs, nil)
+	payload, ok := responsesSSEDataPayload([]byte(strings.TrimSpace(recorder.Body.String())))
+	if !ok {
+		t.Fatal("missing failure SSE payload")
+	}
+	err := ojson.GetBytesNoCopy(payload, "response.error")
+	message := err.Get("message").String()
+	if err.Get("code").String() != "proxy_upstream_failure" || !strings.Contains(message, long) || !strings.Contains(message, "insufficient_quota") || !strings.Contains(message, "req_full") || !strings.Contains(message, "9007199254740993") {
+		t.Fatalf("Codex-visible message lost failure fields: %q", message)
+	}
+	if strings.Contains(recorder.Body.String(), "must_redact") {
+		t.Fatal("failure exposed a credential")
+	}
+	for _, entry := range hook.AllEntries() {
+		if entry.Message == "API response failed" && entry.Data["request_id"] == "local_request_full" {
+			body, _ := entry.Data["error_body"].(string)
+			if strings.Contains(body, long) && !strings.Contains(body, "must_redact") {
+				return
+			}
+		}
+	}
+	t.Fatal("complete correlated failure was not written to the application log")
+}
 
 const (
 	prematureResponsesStreamModel       = "premature-responses-stream-model"
@@ -277,8 +317,8 @@ func TestResponsesHandlerSanitizesErrorBeforeFirstFrame(t *testing.T) {
 			t.Fatalf("initial error leaked %q: %q", secret, body)
 		}
 	}
-	if len(body) > 4096 {
-		t.Fatalf("initial error response remained unbounded: len=%d", len(body))
+	if !strings.Contains(body, strings.Repeat("x", 8192)) {
+		t.Fatalf("initial error response clipped provider details: len=%d", len(body))
 	}
 }
 
@@ -664,8 +704,8 @@ func TestForwardResponsesStreamSanitizesDiagnosticErrorDetails(t *testing.T) {
 		t.Fatalf("unexpected request-log errors: %#v", loggedValue)
 	}
 	diagnostic := loggedErrors[0].Error.Error()
-	if strings.Contains(diagnostic, debugSecret) || strings.Contains(diagnostic, messageSecret) || len(diagnostic) > 4096 {
-		t.Fatalf("request-log diagnostic leaked or retained an unbounded upstream body: len=%d diagnostic=%q", len(diagnostic), diagnostic)
+	if strings.Contains(diagnostic, debugSecret) || strings.Contains(diagnostic, messageSecret) || !strings.Contains(diagnostic, strings.Repeat("x", 8192)) {
+		t.Fatalf("request-log diagnostic leaked credentials or clipped upstream details: len=%d diagnostic=%q", len(diagnostic), diagnostic)
 	}
 	if !strings.Contains(diagnostic, "upstream failed") {
 		t.Fatalf("sanitized request-log diagnostic lost upstream message: %q", diagnostic)

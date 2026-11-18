@@ -8,6 +8,14 @@ import (
 	"testing"
 )
 
+func TestRedactDiagnosticForLogRetainsFullBody(t *testing.T) {
+	full := strings.Repeat("provider details ", 1000)
+	got := RedactDiagnosticForLog(full + ` {"api_key":"private-value"} Bearer private-bearer`)
+	if !strings.HasPrefix(got, full) || strings.Contains(got, "private-value") || strings.Contains(got, "private-bearer") {
+		t.Fatalf("durable diagnostic clipped or leaked credentials: %q", got)
+	}
+}
+
 func TestSafeDiagnosticForLogPreservesAccessTokenExpiredAndRedactsCredentials(t *testing.T) {
 	diagnostic := "access token expired\n" +
 		`access_token=access-secret refresh token: refresh-secret Authorization=Bearer bearer-secret ` +

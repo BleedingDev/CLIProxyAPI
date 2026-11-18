@@ -25,6 +25,14 @@ var (
 	diagnosticStatusPattern       = regexp.MustCompile(`(?i)\bstatus(?:\s+code)?\s*[:=]?\s*([1-5][0-9]{2})\b`)
 )
 
+// RedactDiagnosticForLog retains complete failure details while removing
+// credentials. Unlike the ordinary log excerpt, this is for durable diagnostics.
+func RedactDiagnosticForLog(message string) string {
+	message = urlUserinfoLogPattern.ReplaceAllString(message, `${1}[REDACTED]@`)
+	message = sensitiveLogAssignmentPattern.ReplaceAllString(message, `${1}"[REDACTED]"`)
+	return authorizationLogPattern.ReplaceAllString(message, `${1} [REDACTED]`)
+}
+
 // SafeDiagnosticForLog returns a bounded, single-line diagnostic suitable for
 // ordinary application logs. It preserves the access-token-expired signal while
 // redacting credential values and URL userinfo.

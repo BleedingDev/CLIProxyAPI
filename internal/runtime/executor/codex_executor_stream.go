@@ -204,8 +204,16 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 	budgetExhausted := false
 	exhaustedReason := ""
 
+	lastEvent := "none"
 	scanner := helps.NewCodexSSEScanner(ctx, httpResp.Body, 52_428_800) // 50MB
 	scanner.SetOnLine(func(rawLine []byte) {
+		if bytes.HasPrefix(rawLine, []byte("event:")) {
+			lastEvent = strings.TrimSpace(string(rawLine[len("event:"):]))
+		} else if bytes.HasPrefix(rawLine, dataTag) {
+			if kind := ojson.GetBytesNoCopy(bytes.TrimSpace(rawLine[len(dataTag):]), "type").String(); kind != "" {
+				lastEvent = kind
+			}
+		}
 		helps.AppendAPIResponseChunk(ctx, e.cfg, rawLine)
 	})
 	if buffering {
@@ -274,6 +282,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 				translatedLine = append([]byte("data: "), data...)
 				eventType := ojson.GetBytesNoCopy(data, "type").String()
 				if streamErr, terminalBody, ok := codexTerminalFailureErrWithCooling(data, e.modelLevelCooling()); ok {
+					streamErr = codexFailureDiagnostic(streamErr, codexFailureDetails{HTTPStatus: httpResp.StatusCode, Headers: httpResp.Header, LastEvent: eventType, Event: data})
 					closeBootstrapBody()
 					if errClearReplay := clearCodexReasoningReplayOnInvalidSignature(ctx, replayScope, streamErr.StatusCode(), terminalBody); errClearReplay != nil {
 						helps.RecordAPIResponseError(ctx, e.cfg, errClearReplay)
@@ -306,7 +315,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 				}
 				if helps.IsCodexTerminalEmptyIncomplete(data, len(outputItemsByIndex)+len(outputItemsFallback), sawOutputDelta) {
 					closeBootstrapBody()
-					streamErr := newCodexEmptyIncompleteStreamError()
+					streamErr := newCodexEmptyIncompleteStreamError(codexFailureDetails{HTTPStatus: httpResp.StatusCode, Headers: httpResp.Header, LastEvent: eventType, Event: data})
 					helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
 					reporter.PublishFailure(ctx, streamErr)
 					// Not an overload rejection, so it keeps its in-stream delivery: flush what is
@@ -395,22 +404,21 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 				if ctx.Err() != nil {
 					return nil, ctx.Err()
 				}
-				helps.RecordAPIResponseError(ctx, e.cfg, errScan)
-				reporter.PublishFailure(ctx, errScan)
-				return nil, errScan
+				streamErr := newCodexIncompleteStreamError(codexFailureDetails{HTTPStatus: httpResp.StatusCode, Headers: httpResp.Header, LastEvent: lastEvent, Cause: errScan})
+				helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
+				reporter.PublishFailure(ctx, streamErr)
+				return nil, streamErr
 			}
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
 			if len(bufferedChunks) == 0 && len(initialChunks) == 0 {
-				emptyErr := statusErr{code: http.StatusBadGateway, msg: "upstream stream closed before first payload"}
+				emptyErr := codexFailureDiagnostic(statusErr{code: http.StatusBadGateway, msg: "upstream stream closed before first payload"}, codexFailureDetails{HTTPStatus: httpResp.StatusCode, Headers: httpResp.Header, LastEvent: lastEvent, Cause: scanner.Err()})
 				helps.RecordAPIResponseError(ctx, e.cfg, emptyErr)
 				reporter.PublishFailure(ctx, emptyErr)
-				closedCh := make(chan cliproxyexecutor.StreamChunk)
-				close(closedCh)
-				return &cliproxyexecutor.StreamResult{Headers: httpResp.Header.Clone(), Chunks: closedCh}, nil
+				return nil, emptyErr
 			}
-			streamErr := newCodexIncompleteStreamError()
+			streamErr := newCodexIncompleteStreamError(codexFailureDetails{HTTPStatus: httpResp.StatusCode, Headers: httpResp.Header, LastEvent: lastEvent, Cause: scanner.Err()})
 			helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
 			reporter.PublishFailure(ctx, streamErr)
 			return nil, streamErr
@@ -477,6 +485,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 				translatedLine = append([]byte("data: "), data...)
 				eventType := ojson.GetBytesNoCopy(data, "type").String()
 				if streamErr, terminalBody, ok := codexTerminalFailureErrWithCooling(data, e.modelLevelCooling()); ok {
+					streamErr = codexFailureDiagnostic(streamErr, codexFailureDetails{HTTPStatus: httpResp.StatusCode, Headers: httpResp.Header, LastEvent: eventType, Event: data})
 					if errClearReplay := clearCodexReasoningReplayOnInvalidSignature(ctx, replayScope, streamErr.StatusCode(), terminalBody); errClearReplay != nil {
 						helps.RecordAPIResponseError(ctx, e.cfg, errClearReplay)
 						reporter.PublishFailure(ctx, errClearReplay)
@@ -498,7 +507,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 					sawOutputDelta = true
 				}
 				if helps.IsCodexTerminalEmptyIncomplete(data, len(outputItemsByIndex)+len(outputItemsFallback), sawOutputDelta) {
-					streamErr := newCodexEmptyIncompleteStreamError()
+					streamErr := newCodexEmptyIncompleteStreamError(codexFailureDetails{HTTPStatus: httpResp.StatusCode, Headers: httpResp.Header, LastEvent: eventType, Event: data})
 					helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
 					reporter.PublishFailure(ctx, streamErr)
 					select {
@@ -560,12 +569,16 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 			helps.RecordAPIResponseError(ctx, e.cfg, errScan)
 		}
 		if emittedCount == 0 {
-			emptyErr := statusErr{code: http.StatusBadGateway, msg: "upstream stream closed before first payload"}
+			emptyErr := codexFailureDiagnostic(statusErr{code: http.StatusBadGateway, msg: "upstream stream closed before first payload"}, codexFailureDetails{HTTPStatus: httpResp.StatusCode, Headers: httpResp.Header, LastEvent: lastEvent, Cause: scanner.Err()})
 			helps.RecordAPIResponseError(ctx, e.cfg, emptyErr)
 			reporter.PublishFailure(ctx, emptyErr)
+			select {
+			case out <- cliproxyexecutor.StreamChunk{Err: emptyErr}:
+			case <-ctx.Done():
+			}
 			return
 		}
-		streamErr := newCodexIncompleteStreamError()
+		streamErr := newCodexIncompleteStreamError(codexFailureDetails{HTTPStatus: httpResp.StatusCode, Headers: httpResp.Header, LastEvent: lastEvent, Cause: scanner.Err()})
 		helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
 		reporter.PublishFailure(ctx, streamErr)
 		select {

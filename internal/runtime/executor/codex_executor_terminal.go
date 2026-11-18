@@ -2,6 +2,7 @@ package executor
 
 import (
 	"bytes"
+	"io"
 	"net/http"
 	"sort"
 	"strconv"
@@ -20,11 +21,14 @@ type codexIncompleteStreamError struct {
 	statusErr
 }
 
-func newCodexIncompleteStreamError() codexIncompleteStreamError {
-	return codexIncompleteStreamError{statusErr: statusErr{
+func newCodexIncompleteStreamError(details codexFailureDetails) codexIncompleteStreamError {
+	if details.Cause == nil {
+		details.Cause = io.EOF
+	}
+	return codexIncompleteStreamError{statusErr: codexFailureDiagnostic(statusErr{
 		code: http.StatusRequestTimeout,
 		msg:  codexIncompleteStreamMessage,
-	}}
+	}, details)}
 }
 
 func (codexIncompleteStreamError) IsRequestScoped() bool {
@@ -35,11 +39,11 @@ type codexEmptyIncompleteStreamError struct {
 	statusErr
 }
 
-func newCodexEmptyIncompleteStreamError() codexEmptyIncompleteStreamError {
-	return codexEmptyIncompleteStreamError{statusErr: statusErr{
+func newCodexEmptyIncompleteStreamError(details codexFailureDetails) codexEmptyIncompleteStreamError {
+	return codexEmptyIncompleteStreamError{statusErr: codexFailureDiagnostic(statusErr{
 		code: http.StatusBadGateway,
 		msg:  helps.CodexEmptyIncompleteStreamMessage,
-	}}
+	}, details)}
 }
 
 func (codexEmptyIncompleteStreamError) IsRequestScoped() bool {
@@ -245,7 +249,12 @@ func codexTerminalFailureBody(eventData []byte) ([]byte, bool) {
 	if seq := ojson.GetBytesNoCopy(eventData, "sequence_number"); seq.Exists() {
 		_ = doc.Set("sequence_number", seq.Int())
 	}
-	return doc.Bytes(), true
+	envelope := ojson.NewDoc(eventData)
+	_ = envelope.SetRawBytes("error", []byte(doc.Get("error").Raw))
+	if status := doc.Get("status"); status.Exists() {
+		_ = envelope.SetRawBytes("status", []byte(status.Raw))
+	}
+	return envelope.Bytes(), true
 }
 
 func codexTerminalStreamErrShouldHandle(body []byte) bool {
@@ -385,7 +394,7 @@ func newCodexStatusErrWithHeadersAndCooling(statusCode int, headers http.Header,
 			err.retryAfter = retryAfter
 		}
 	}
-	return err
+	return codexFailureDiagnostic(err, codexFailureDetails{HTTPStatus: statusCode, Headers: headers})
 }
 
 func classifyCodexStatusError(statusCode int, body []byte) []byte {
@@ -403,7 +412,13 @@ func classifyCodexStatusError(statusCode int, body []byte) []byte {
 	if message == "" {
 		message = http.StatusText(statusCode)
 	}
-	doc := ojson.NewDoc([]byte(`{"error":{}}`))
+	doc := ojson.NewDoc(body)
+	if !ojson.GetBytesNoCopy(body, "error").IsObject() {
+		doc = ojson.NewDoc([]byte(`{"error":{}}`))
+		_ = doc.Set("error.upstream_body", string(body))
+	} else {
+		_ = doc.SetRawBytes("error.provider_error", []byte(ojson.GetBytesNoCopy(body, "error").Raw))
+	}
 	_ = doc.Set("error.message", message)
 	_ = doc.Set("error.type", errType)
 	_ = doc.Set("error.code", code)

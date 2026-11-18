@@ -136,7 +136,8 @@ func clearCodexReasoningReplayOnWebsocketError(ctx context.Context, scope codexR
 }
 
 func buildCodexWebsocketErrorPayload(payload []byte, status int) []byte {
-	doc := ojson.NewDocString(`{"type":"error"}`)
+	doc := ojson.NewDoc(payload)
+	_ = doc.Delete("headers")
 	_ = doc.Set("status", status)
 	if seq := ojson.GetBytesNoCopy(payload, "sequence_number"); seq.Exists() {
 		_ = doc.Set("sequence_number", seq.Int())

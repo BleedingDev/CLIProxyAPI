@@ -90,6 +90,34 @@ func BuildOpenAIResponsesStreamFailedChunk(status int, errText string, sequenceN
 	return []byte(`{"type":"response.failed","sequence_number":0,"response":{"status":"failed","error":{"type":"server_error","code":"internal_server_error","message":"internal error"}}}`)
 }
 
+// BuildCodexResponsesStreamFailedChunk carries the complete failure in the one
+// field Codex retains. Provider codes remain in provider_error: Codex substitutes
+// canned text for several standard codes and otherwise discards extra fields.
+func BuildCodexResponsesStreamFailedChunk(status int, errText string, sequenceNumber int) []byte {
+	doc := ojson.NewDoc(BuildOpenAIResponsesStreamFailedChunk(status, errText, sequenceNumber))
+	providerError := doc.Get("response.error")
+	if providerError.Get("code").String() == "proxy_upstream_failure" && providerError.Get("provider_error").Exists() {
+		return doc.Bytes()
+	}
+	diagnostic := ojson.NewDocString(`{}`)
+	_ = diagnostic.Set("status", status)
+	_ = diagnostic.SetRaw("error", providerError.Raw)
+	if ojson.Valid(errText) {
+		_ = diagnostic.SetRaw("upstream_body", errText)
+	} else {
+		_ = diagnostic.Set("upstream_body", errText)
+	}
+	message := providerError.Get("message").String()
+	if strings.TrimSpace(message) == "" {
+		message = http.StatusText(status)
+	}
+	_ = doc.SetRaw("response.error.provider_error", providerError.Raw)
+	_ = doc.Set("response.error.code", "proxy_upstream_failure")
+	_ = doc.Set("response.error.type", "server_error")
+	_ = doc.Set("response.error.message", message+"\nUpstream failure details: "+string(diagnostic.Bytes()))
+	return doc.Bytes()
+}
+
 func populateOpenAIResponsesStreamErrorChunkDoc(doc *ojson.Doc, errorPath string, status int, errText string, sequenceNumber int) {
 	if status <= 0 {
 		status = http.StatusInternalServerError

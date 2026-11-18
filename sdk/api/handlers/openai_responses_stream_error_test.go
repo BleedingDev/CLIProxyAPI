@@ -6,7 +6,27 @@ import (
 	"testing"
 
 	"github.com/MoeForge/moego/json"
+	"github.com/MoeForge/moego/ojson"
 )
+
+func TestBuildCodexResponsesStreamFailedChunkPreservesFullDiagnostic(t *testing.T) {
+	long := strings.Repeat("full provider body ", 700)
+	for _, code := range []string{"context_length_exceeded", "insufficient_quota", "usage_not_included", "server_is_overloaded", "slow_down", "custom_provider_code"} {
+		errText, _ := json.Marshal(map[string]any{"error": map[string]any{"code": code, "message": long, "custom": []any{nil, true, json.Number("9007199254740993")}}, "request_id": "req_body", "status": 503})
+		chunk := BuildCodexResponsesStreamFailedChunk(503, string(errText), 4)
+		err := ojson.GetBytesNoCopy(chunk, "response.error")
+		if err.Get("code").String() != "proxy_upstream_failure" || err.Get("provider_error.code").String() != code {
+			t.Fatalf("Codex wire/provider code lost: %s", chunk)
+		}
+		message := err.Get("message").String()
+		if !strings.Contains(message, long) || !strings.Contains(message, code) || !strings.Contains(message, "9007199254740993") || !strings.Contains(message, "req_body") {
+			t.Fatalf("Codex message lost complete details: %q", message)
+		}
+		if again := BuildCodexResponsesStreamFailedChunk(503, string(chunk), 4); string(again) != string(chunk) {
+			t.Fatal("repairing a proxy failure changed or expanded it")
+		}
+	}
+}
 
 func TestBuildOpenAIResponsesStreamErrorChunk(t *testing.T) {
 	chunk := BuildOpenAIResponsesStreamErrorChunk(http.StatusInternalServerError, "unexpected EOF", 0)

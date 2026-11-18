@@ -451,6 +451,9 @@ func (f *responsesSSEFramer) repairErrorPayload(payload []byte) []byte {
 	}
 	if failureEvent == "response.failed" {
 		chunk := handlers.BuildOpenAIResponsesStreamFailedChunk(status, errText, seq)
+		if f.isCodexClient {
+			chunk = handlers.BuildCodexResponsesStreamFailedChunk(status, errText, seq)
+		}
 		if isResponseFailedPayload && ojson.GetBytesNoCopy(payload, "response").IsObject() {
 			repaired := f.repairCompletedPayload(payload)
 			respDoc := ojson.NewDoc([]byte(ojson.GetBytesNoCopy(repaired, "response").Raw))
@@ -1332,10 +1335,7 @@ func isCodexResponsesClientRequest(c *gin.Context) bool {
 	}
 }
 
-const (
-	responsesStreamErrorMessageLimit = 2048
-	responsesStreamErrorFieldLimit   = 256
-)
+const responsesStreamErrorFieldLimit = 256
 
 var (
 	responsesStreamSensitiveValuePattern = regexp.MustCompile(`(?i)((?:"?(?:api[_-]?key|access[_-]?token|token|authorization|secret)"?)\s*[=:]\s*"?)([^\s"&,;}]+)`)
@@ -1378,7 +1378,7 @@ func isResponsesStreamSensitiveKey(key string) bool {
 func sanitizeResponsesStreamErrorNode(val any) any {
 	switch v := val.(type) {
 	case string:
-		return truncateResponsesStreamErrorText(redactResponsesStreamErrorText(v), responsesStreamErrorMessageLimit)
+		return redactResponsesStreamErrorText(v)
 	case map[string]any:
 		cleaned := make(map[string]any, len(v))
 		for k, item := range v {
@@ -1407,14 +1407,14 @@ func responsesStreamErrorText(errMsg *interfaces.ErrorMessage, status int) strin
 	}
 	trimmed := strings.TrimSpace(text)
 	if !json.Valid([]byte(trimmed)) {
-		return truncateResponsesStreamErrorText(redactResponsesStreamErrorText(trimmed), responsesStreamErrorMessageLimit)
+		return redactResponsesStreamErrorText(trimmed)
 	}
 
 	var root map[string]any
 	dec := json.NewDecoder(bytes.NewReader([]byte(trimmed)))
 	dec.UseNumber()
 	if errUnmarshal := dec.Decode(&root); errUnmarshal != nil {
-		return truncateResponsesStreamErrorText(redactResponsesStreamErrorText(trimmed), responsesStreamErrorMessageLimit)
+		return redactResponsesStreamErrorText(trimmed)
 	}
 
 	errorNode, hasError := root["error"].(map[string]any)
@@ -1430,14 +1430,8 @@ func responsesStreamErrorText(errMsg *interfaces.ErrorMessage, status int) strin
 	}
 
 	if hasError {
-		cleanedError := sanitizeResponsesStreamErrorNode(errorNode)
-		out := map[string]any{
-			"error": cleanedError,
-		}
-		if seq, ok := root["sequence_number"]; ok {
-			out["sequence_number"] = seq
-		}
-		data, errMarshal := json.Marshal(out)
+		root["error"] = errorNode
+		data, errMarshal := json.Marshal(sanitizeResponsesStreamErrorNode(root))
 		if errMarshal == nil {
 			return string(data)
 		}
@@ -1546,7 +1540,7 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesStream(c *gin.Context, flush
 			seq = int(origSeq.Int())
 		}
 		if isCodexResponsesClientRequest(c) {
-			chunk := handlers.BuildOpenAIResponsesStreamFailedChunk(status, errText, seq)
+			chunk := handlers.BuildCodexResponsesStreamFailedChunk(status, errText, seq)
 			_, _ = fmt.Fprintf(c.Writer, "\nevent: response.failed\ndata: %s\n\n", string(chunk))
 			return
 		}
